@@ -33,7 +33,7 @@ class AppFrame ( wx.Frame ):
 
 		titleSizer.Add( ( 0, 0), 1, wx.EXPAND, 5 )
 
-		self.titleLabel = wx.StaticText( self, wx.ID_ANY, u"Chromatic Scale Generator", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.titleLabel = wx.StaticText( self, wx.ID_ANY, u"ChromaKit", wx.DefaultPosition, wx.DefaultSize, 0 )
 		self.titleLabel.Wrap( -1 )
 
 		self.titleLabel.SetFont( wx.Font( 25, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, wx.EmptyString ) )

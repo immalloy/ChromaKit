@@ -10,7 +10,7 @@ from os.path import exists
 import parselmouth
 import wx
 
-from chromatic_generator import app_ui
+from chromakit import app_ui
 
 
 class GeneratorGUI(app_ui.AppFrame):

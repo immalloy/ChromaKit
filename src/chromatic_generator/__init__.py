@@ -1,2 +1,0 @@
-"""Chromatic Scale Generator package."""
-

@@ -1,0 +1,4 @@
+praat-parselmouth
+wxPython
+pyinstaller
+

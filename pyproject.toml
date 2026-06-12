@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ChromaKit"
 version = "0.1.0"
-description = "A Windows desktop tool for generating chromatic WAV sample sets."
+description = "A cross-platform desktop tool for generating chromatic WAV sample sets."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }
@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
   "praat-parselmouth",
-  "wxPython"
+  "PySide6"
 ]
 
 [project.urls]

@@ -1,4 +1,3 @@
 praat-parselmouth
-wxPython
+PySide6
 pyinstaller
-

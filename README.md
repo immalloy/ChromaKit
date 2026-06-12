@@ -1,6 +1,6 @@
 # ChromaKit
 
-ChromaKit is a simple Windows app for making Friday Night Funkin' chromatic scales.
+ChromaKit is a simple cross-platform app for making Friday Night Funkin' chromatic scales.
 
 In FNF, a chromatic scale, often called a chrom, is an audio file that contains a character's voice singing vowels or other sounds across a musical range. It works like a small custom voicebank, similar in idea to a Vocaloid voicebank, so composers and cover creators can make a character sing any melody in a DAW like FL Studio, Ableton, or Reaper.
 

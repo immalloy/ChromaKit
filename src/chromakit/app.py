@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 from pathlib import Path
 import random
@@ -11,12 +12,13 @@ from typing import Callable, Iterable, Sequence
 
 import numpy as np
 import parselmouth
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QTextCursor
+from PySide6.QtCore import QSettings, QThread, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QFont, QFontDatabase, QIcon, QPalette, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
 	QApplication,
 	QCheckBox,
 	QComboBox,
+	QDialog,
 	QDoubleSpinBox,
 	QFileDialog,
 	QFormLayout,
@@ -30,8 +32,10 @@ from PySide6.QtWidgets import (
 	QProgressBar,
 	QPushButton,
 	QSpinBox,
+	QStyle,
 	QTabWidget,
 	QTextEdit,
+	QToolButton,
 	QVBoxLayout,
 	QWidget,
 )
@@ -43,6 +47,33 @@ SAMPLE_RATES = ["48000", "44100"]
 ORDER_MODES = ["sequential", "shuffle", "random"]
 DEFAULT_SAMPLE_RATE = 48000
 LOW_NOTE_FFT_THRESHOLD = 60.0
+BRAND_CHROMA_COLOR = "#0D1524"
+BRAND_KIT_COLOR = "#0A8CE6"
+BRAND_CHROMA_DARK_COLOR = "#F7FBFF"
+
+
+def asset_path(name: str) -> Path:
+	candidates = []
+	bundle_root = getattr(sys, "_MEIPASS", None)
+	if bundle_root:
+		candidates.append(Path(bundle_root) / "assets" / name)
+	candidates.extend(
+		(
+			Path(__file__).resolve().parents[2] / "assets" / name,
+			Path.cwd() / "assets" / name,
+		)
+	)
+	for candidate in candidates:
+		if candidate.exists():
+			return candidate
+	return candidates[-1]
+
+
+def load_brand_font() -> None:
+	for name in ("Sora-Bold.ttf", "Sora-Variable.ttf"):
+		font_path = asset_path(name)
+		if font_path.exists():
+			QFontDatabase.addApplicationFont(str(font_path))
 
 
 @dataclass(frozen=True)
@@ -552,7 +583,11 @@ class PrepareWorker(QThread):
 class GeneratorWindow(QMainWindow):
 	def __init__(self) -> None:
 		super().__init__()
+		self.settings = QSettings("immalloy", "ChromaKit")
 		self.setWindowTitle("ChromaKit")
+		icon_path = asset_path("icon.ico")
+		if icon_path.exists():
+			self.setWindowIcon(QIcon(str(icon_path)))
 		self.setMinimumSize(920, 620)
 		self.setAcceptDrops(True)
 
@@ -566,6 +601,8 @@ class GeneratorWindow(QMainWindow):
 		self.tabs.addTab(self.build_prepare_tab(), "Prepare Samples")
 
 		self.statusBar().showMessage("Idle")
+		self.apply_system_brand_theme()
+		self.restore_autosaved_options()
 		self.refresh_generation_validation()
 
 	def build_generate_tab(self) -> QWidget:
@@ -574,12 +611,33 @@ class GeneratorWindow(QMainWindow):
 		layout.setContentsMargins(16, 14, 16, 14)
 		layout.setSpacing(10)
 
-		title = QLabel("ChromaKit")
-		font = title.font()
-		font.setPointSize(18)
-		font.setBold(True)
-		title.setFont(font)
-		layout.addWidget(title)
+		title_font = self.font()
+		title_font.setFamily("Sora")
+		title_font.setPointSize(24)
+		title_font.setWeight(QFont.Weight.Black)
+		title_chroma = QLabel("Chroma")
+		title_chroma.setFont(title_font)
+		self.title_chroma = title_chroma
+		title_kit = QLabel("Kit")
+		title_kit.setFont(title_font)
+		self.title_kit = title_kit
+		mark = QLabel()
+		icon_path = asset_path("chromakit-icon.png")
+		pixmap = QPixmap(str(icon_path))
+		if not pixmap.isNull():
+			mark.setPixmap(pixmap.scaled(46, 46, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+		header = QHBoxLayout()
+		header.setSpacing(10)
+		header.addWidget(mark)
+		header.addWidget(title_chroma)
+		header.addWidget(title_kit)
+		header.addStretch(1)
+		self.settings_button = QToolButton()
+		self.settings_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+		self.settings_button.setToolTip("Settings, import/export, and credits")
+		self.settings_button.clicked.connect(self.show_settings_modal)
+		header.addWidget(self.settings_button)
+		layout.addLayout(header)
 
 		content = QHBoxLayout()
 		content.setSpacing(14)
@@ -588,6 +646,9 @@ class GeneratorWindow(QMainWindow):
 		controls = QVBoxLayout()
 		controls.setSpacing(10)
 		content.addLayout(controls, 0)
+
+		self.generate_settings_tabs = QTabWidget()
+		controls.addWidget(self.generate_settings_tabs, 1)
 
 		self.folder_input = QLineEdit()
 		self.folder_input.setPlaceholderText("Choose or drop a folder with WAV samples")
@@ -605,7 +666,12 @@ class GeneratorWindow(QMainWindow):
 		source_layout = QVBoxLayout(source_group)
 		source_layout.addLayout(folder_row)
 		source_layout.addWidget(self.validation_label)
-		controls.addWidget(source_group)
+		source_tab = QWidget()
+		source_tab_layout = QVBoxLayout(source_tab)
+		source_tab_layout.setContentsMargins(8, 8, 8, 8)
+		source_tab_layout.addWidget(source_group)
+		source_tab_layout.addStretch(1)
+		self.generate_settings_tabs.addTab(source_tab, "Source")
 
 		self.start_note_input = QComboBox()
 		self.start_note_input.addItems(NOTES)
@@ -628,7 +694,12 @@ class GeneratorWindow(QMainWindow):
 		form.addRow("Range:", self.range_input)
 		form.addRow("Sample gap:", self.gap_input)
 		form.addRow("Sample order:", self.order_input)
-		controls.addWidget(pitch_group)
+		pitch_tab = QWidget()
+		pitch_tab_layout = QVBoxLayout(pitch_tab)
+		pitch_tab_layout.setContentsMargins(8, 8, 8, 8)
+		pitch_tab_layout.addWidget(pitch_group)
+		pitch_tab_layout.addStretch(1)
+		self.generate_settings_tabs.addTab(pitch_tab, "Pitch / Range")
 
 		self.pitch_input = QCheckBox("Pitch samples")
 		self.pitch_input.setChecked(True)
@@ -655,7 +726,12 @@ class GeneratorWindow(QMainWindow):
 		options.addWidget(self.fixed_length_input, 4, 1)
 		options.addWidget(QLabel("Output sample rate:"), 5, 0)
 		options.addWidget(self.sample_rate_input, 5, 1)
-		controls.addWidget(options_group)
+		processing_tab = QWidget()
+		processing_tab_layout = QVBoxLayout(processing_tab)
+		processing_tab_layout.setContentsMargins(8, 8, 8, 8)
+		processing_tab_layout.addWidget(options_group)
+		processing_tab_layout.addStretch(1)
+		self.generate_settings_tabs.addTab(processing_tab, "Processing")
 
 		self.generate_button = QPushButton("Generate Chromatic")
 		self.generate_button.clicked.connect(self.generate)
@@ -702,6 +778,9 @@ class GeneratorWindow(QMainWindow):
 		controls.setSpacing(10)
 		content.addLayout(controls, 0)
 
+		self.prepare_settings_tabs = QTabWidget()
+		controls.addWidget(self.prepare_settings_tabs, 1)
+
 		self.prepare_source_input = QLineEdit()
 		self.prepare_source_input.setReadOnly(True)
 		self.prepare_source_input.setPlaceholderText("Choose WAV files or a folder to split by silence")
@@ -709,14 +788,20 @@ class GeneratorWindow(QMainWindow):
 		self.prepare_files_button.clicked.connect(self.choose_prepare_files)
 		self.prepare_folder_button = QPushButton("Choose Folder")
 		self.prepare_folder_button.clicked.connect(self.choose_prepare_folder)
-		source_row = QHBoxLayout()
-		source_row.addWidget(self.prepare_source_input)
-		source_row.addWidget(self.prepare_files_button)
-		source_row.addWidget(self.prepare_folder_button)
+		source_buttons = QHBoxLayout()
+		source_buttons.addWidget(self.prepare_files_button)
+		source_buttons.addWidget(self.prepare_folder_button)
+		source_buttons.addStretch(1)
 		source_group = QGroupBox("Source")
 		source_layout = QVBoxLayout(source_group)
-		source_layout.addLayout(source_row)
-		controls.addWidget(source_group)
+		source_layout.addWidget(self.prepare_source_input)
+		source_layout.addLayout(source_buttons)
+		source_tab = QWidget()
+		source_tab_layout = QVBoxLayout(source_tab)
+		source_tab_layout.setContentsMargins(8, 8, 8, 8)
+		source_tab_layout.addWidget(source_group)
+		source_tab_layout.addStretch(1)
+		self.prepare_settings_tabs.addTab(source_tab, "Source")
 
 		self.threshold_input = QDoubleSpinBox()
 		self.threshold_input.setRange(-90.0, -1.0)
@@ -745,7 +830,12 @@ class GeneratorWindow(QMainWindow):
 		prepare_form.addRow("Minimum silence gap:", self.min_silence_input)
 		prepare_form.addRow("Padding:", self.padding_input)
 		prepare_form.addRow("Output sample rate:", self.prepare_sample_rate_input)
-		controls.addWidget(prepare_group)
+		silence_tab = QWidget()
+		silence_tab_layout = QVBoxLayout(silence_tab)
+		silence_tab_layout.setContentsMargins(8, 8, 8, 8)
+		silence_tab_layout.addWidget(prepare_group)
+		silence_tab_layout.addStretch(1)
+		self.prepare_settings_tabs.addTab(silence_tab, "Silence")
 
 		self.prepare_button = QPushButton("Prepare Samples")
 		self.prepare_button.setEnabled(False)
@@ -776,6 +866,184 @@ class GeneratorWindow(QMainWindow):
 		content.addWidget(prepare_output_group, 1)
 
 		return tab
+
+	def system_theme_is_dark(self) -> bool:
+		scheme = QApplication.styleHints().colorScheme()
+		if scheme == Qt.ColorScheme.Dark:
+			return True
+		if scheme == Qt.ColorScheme.Light:
+			return False
+		return QApplication.palette().color(QPalette.ColorRole.Window).lightness() < 128
+
+	def apply_system_brand_theme(self) -> None:
+		dark = self.system_theme_is_dark()
+		self.title_chroma.setStyleSheet(f"color: {BRAND_CHROMA_DARK_COLOR if dark else BRAND_CHROMA_COLOR};")
+		self.title_kit.setStyleSheet(f"color: {BRAND_KIT_COLOR};")
+		self.validation_label.setStyleSheet(f"color: {'#ff8d8d' if dark else '#a33'};")
+
+	def show_settings_modal(self) -> None:
+		dialog = QDialog(self)
+		dialog.setWindowTitle("ChromaKit Settings")
+		dialog.setMinimumSize(520, 360)
+		layout = QVBoxLayout(dialog)
+		tabs = QTabWidget()
+		tabs.addTab(self.build_import_export_tab(dialog), "Import / Export")
+		tabs.addTab(self.build_credits_tab(), "Credits")
+		layout.addWidget(tabs)
+		close_button = QPushButton("Close")
+		close_button.clicked.connect(dialog.accept)
+		button_row = QHBoxLayout()
+		button_row.addStretch(1)
+		button_row.addWidget(close_button)
+		layout.addLayout(button_row)
+		dialog.exec()
+
+	def build_import_export_tab(self, dialog: QDialog) -> QWidget:
+		tab = QWidget()
+		layout = QVBoxLayout(tab)
+		layout.setContentsMargins(12, 12, 12, 12)
+		layout.setSpacing(10)
+
+		options_group = QGroupBox("Options Backup")
+		options_layout = QVBoxLayout(options_group)
+		options_note = QLabel(
+			"ChromaKit autosaves your current options while you use the app. "
+			"Use these buttons when you want a backup file or want to move options to another install."
+		)
+		options_note.setWordWrap(True)
+		options_layout.addWidget(options_note)
+		button_row = QHBoxLayout()
+		export_button = QPushButton("Export Options")
+		export_button.clicked.connect(lambda: self.export_options(dialog))
+		import_button = QPushButton("Import Options")
+		import_button.clicked.connect(lambda: self.import_options(dialog))
+		button_row.addWidget(export_button)
+		button_row.addWidget(import_button)
+		options_layout.addLayout(button_row)
+		layout.addWidget(options_group)
+		layout.addStretch(1)
+		return tab
+
+	def build_credits_tab(self) -> QWidget:
+		tab = QWidget()
+		layout = QVBoxLayout(tab)
+		layout.setContentsMargins(12, 12, 12, 12)
+		credits = QLabel(
+			"<b>ChromaKit</b><br>"
+			"Created by immalloy.<br><br>"
+			"<b>Based on</b><br>"
+			"Chromatic Scale Generator by ChillSpace.<br><br>"
+			"<b>Inspired by previous versions</b><br>"
+			"Chromatic Scale Generator PLUS! (REVIVED).<br>"
+			"(CANCELLED) Chromatic Scale Generator DELUXE."
+		)
+		credits.setTextFormat(Qt.RichText)
+		credits.setWordWrap(True)
+		layout.addWidget(credits)
+		layout.addStretch(1)
+		return tab
+
+	def current_options(self) -> dict[str, object]:
+		return {
+			"version": 1,
+			"generate": {
+				"folder": self.folder_input.text(),
+				"start_note": self.start_note_input.currentText(),
+				"start_octave": self.start_octave_input.currentText(),
+				"range": self.range_input.text(),
+				"gap": self.gap_input.text(),
+				"order": self.order_input.currentText(),
+				"pitch_samples": self.pitch_input.isChecked(),
+				"dump_samples": self.dump_input.isChecked(),
+				"trim_silence": self.trim_silence_input.isChecked(),
+				"normalize": self.normalize_input.isChecked(),
+				"slicex_markers": self.slicex_input.isChecked(),
+				"fade_ms": self.fade_input.text(),
+				"fixed_note_length": self.fixed_length_input.text(),
+				"sample_rate": self.sample_rate_input.currentText(),
+			},
+			"prepare": {
+				"source": self.prepare_source_input.text(),
+				"threshold_db": self.threshold_input.value(),
+				"min_region_ms": self.min_region_input.value(),
+				"min_silence_ms": self.min_silence_input.value(),
+				"padding_ms": self.padding_input.value(),
+				"sample_rate": self.prepare_sample_rate_input.currentText(),
+			},
+		}
+
+	def export_options(self, parent: QWidget) -> None:
+		path, _ = QFileDialog.getSaveFileName(parent, "Export ChromaKit options", "chromakit-options.json", "JSON files (*.json)")
+		if not path:
+			return
+		try:
+			Path(path).write_text(json.dumps(self.current_options(), indent=2), encoding="utf-8")
+		except Exception as error:
+			QMessageBox.critical(parent, "ChromaKit", f"Could not export options: {error}")
+			return
+		QMessageBox.information(parent, "ChromaKit", f"Exported options to {path}")
+
+	def import_options(self, parent: QWidget) -> None:
+		path, _ = QFileDialog.getOpenFileName(parent, "Import ChromaKit options", "", "JSON files (*.json)")
+		if not path:
+			return
+		try:
+			data = json.loads(Path(path).read_text(encoding="utf-8"))
+			if not isinstance(data, dict):
+				raise ValueError("Options file must contain a JSON object.")
+			self.apply_imported_options(data)
+			self.save_autosaved_options()
+		except Exception as error:
+			QMessageBox.critical(parent, "ChromaKit", f"Could not import options: {error}")
+			return
+		QMessageBox.information(parent, "ChromaKit", "Imported options.")
+
+	def apply_imported_options(self, data: dict[str, object]) -> None:
+		generate = data.get("generate", {})
+		if isinstance(generate, dict):
+			self.folder_input.setText(str(generate.get("folder", self.folder_input.text())))
+			self.start_note_input.setCurrentText(str(generate.get("start_note", self.start_note_input.currentText())))
+			self.start_octave_input.setCurrentText(str(generate.get("start_octave", self.start_octave_input.currentText())))
+			self.range_input.setText(str(generate.get("range", self.range_input.text())))
+			self.gap_input.setText(str(generate.get("gap", self.gap_input.text())))
+			self.order_input.setCurrentText(str(generate.get("order", self.order_input.currentText())))
+			self.pitch_input.setChecked(bool(generate.get("pitch_samples", self.pitch_input.isChecked())))
+			self.dump_input.setChecked(bool(generate.get("dump_samples", self.dump_input.isChecked())))
+			self.trim_silence_input.setChecked(bool(generate.get("trim_silence", self.trim_silence_input.isChecked())))
+			self.normalize_input.setChecked(bool(generate.get("normalize", self.normalize_input.isChecked())))
+			self.slicex_input.setChecked(bool(generate.get("slicex_markers", self.slicex_input.isChecked())))
+			self.fade_input.setText(str(generate.get("fade_ms", self.fade_input.text())))
+			self.fixed_length_input.setText(str(generate.get("fixed_note_length", self.fixed_length_input.text())))
+			self.sample_rate_input.setCurrentText(str(generate.get("sample_rate", self.sample_rate_input.currentText())))
+
+		prepare = data.get("prepare", {})
+		if isinstance(prepare, dict):
+			self.threshold_input.setValue(float(prepare.get("threshold_db", self.threshold_input.value())))
+			self.min_region_input.setValue(int(prepare.get("min_region_ms", self.min_region_input.value())))
+			self.min_silence_input.setValue(int(prepare.get("min_silence_ms", self.min_silence_input.value())))
+			self.padding_input.setValue(int(prepare.get("padding_ms", self.padding_input.value())))
+			self.prepare_sample_rate_input.setCurrentText(str(prepare.get("sample_rate", self.prepare_sample_rate_input.currentText())))
+
+		self.refresh_generation_validation()
+
+	def restore_autosaved_options(self) -> None:
+		raw = self.settings.value("options")
+		if not raw:
+			return
+		try:
+			data = json.loads(str(raw))
+			if isinstance(data, dict):
+				self.apply_imported_options(data)
+		except Exception:
+			pass
+
+	def save_autosaved_options(self) -> None:
+		self.settings.setValue("options", json.dumps(self.current_options()))
+		self.settings.sync()
+
+	def closeEvent(self, event: QCloseEvent) -> None:
+		self.save_autosaved_options()
+		super().closeEvent(event)
 
 	def dragEnterEvent(self, event: QDragEnterEvent) -> None:
 		if event.mimeData().hasUrls():
@@ -910,6 +1178,7 @@ class GeneratorWindow(QMainWindow):
 		self.log_output.clear()
 		self.progress.setRange(0, settings.semitones)
 		self.progress.setValue(0)
+		self.save_autosaved_options()
 		self.start_worker(GenerationWorker(settings), "Generating...")
 
 	def prepare(self) -> None:
@@ -941,6 +1210,7 @@ class GeneratorWindow(QMainWindow):
 		self.prepare_log_output.clear()
 		self.prepare_progress.setRange(0, max(1, len(self.prepare_sources)))
 		self.prepare_progress.setValue(0)
+		self.save_autosaved_options()
 		self.start_worker(PrepareWorker(settings), "Preparing samples...")
 
 	def start_worker(self, worker: GenerationWorker | PrepareWorker, status: str) -> None:
@@ -972,6 +1242,7 @@ class GeneratorWindow(QMainWindow):
 			self.fixed_length_input,
 			self.sample_rate_input,
 			self.browse_button,
+			self.settings_button,
 		)
 		prepare_inputs: Iterable[QWidget] = (
 			self.prepare_source_input,
@@ -1053,6 +1324,10 @@ class GeneratorWindow(QMainWindow):
 
 def main() -> None:
 	app = QApplication(sys.argv)
+	load_brand_font()
+	icon_path = asset_path("icon.ico")
+	if icon_path.exists():
+		app.setWindowIcon(QIcon(str(icon_path)))
 	window = GeneratorWindow()
 	window.show()
 	sys.exit(app.exec())

@@ -36,6 +36,10 @@ def main():
 		command.append("--windowed")
 		command.extend(["--icon", str(icon)])
 
+	if (ROOT / "assets").exists():
+		separator = ";" if sys.platform.startswith("win") else ":"
+		command.extend(["--add-data", f"{ROOT / 'assets'}{separator}assets"])
+
 	command.append(str(ROOT / "src" / "chromakit" / "__main__.py"))
 	subprocess.run(command, cwd=ROOT, check=True)
 

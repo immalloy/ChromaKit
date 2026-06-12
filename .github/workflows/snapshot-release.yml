@@ -42,7 +42,7 @@ jobs:
         run: python scripts/build.py
 
       - name: Upload build asset
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: chromakit-${{ runner.os }}
           path: dist/release/*

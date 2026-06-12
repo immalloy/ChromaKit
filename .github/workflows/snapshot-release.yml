@@ -59,7 +59,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download build assets
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 

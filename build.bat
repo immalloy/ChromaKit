@@ -12,9 +12,8 @@ python -m PyInstaller ^
 	--noconsole ^
 	--icon "assets\icon.ico" ^
 	--paths "src" ^
-	--name "chromatic_generator" ^
+	--name "ChromaKit" ^
 	--hidden-import numpy ^
-	"src\chromatic_generator\__main__.py"
+	"src\chromakit\__main__.py"
 
 exit /b %errorlevel%
-

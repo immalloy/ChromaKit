@@ -3,5 +3,4 @@ setlocal
 cd /d "%~dp0"
 
 set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
-python -m chromatic_generator
-
+python -m chromakit

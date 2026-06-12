@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ChromaKit"
+version = "0.1.0"
+description = "A Windows desktop tool for generating chromatic WAV sample sets."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+  { name = "ChromaKit contributors" }
+]
+dependencies = [
+  "praat-parselmouth",
+  "wxPython"
+]
+
+[project.urls]
+Homepage = "https://github.com/immalloy/ChromaKit"
+Repository = "https://github.com/immalloy/ChromaKit"
+Issues = "https://github.com/immalloy/ChromaKit/issues"
+
+[project.gui-scripts]
+chromakit = "chromakit.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

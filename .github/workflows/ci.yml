@@ -8,7 +8,11 @@ on:
 jobs:
   python:
     name: Python checks
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
 
     steps:
       - name: Check out repository
@@ -32,3 +36,6 @@ jobs:
         run: python -c "import chromakit; import chromakit.__main__"
         env:
           PYTHONPATH: src
+
+      - name: Build app
+        run: python scripts/build.py

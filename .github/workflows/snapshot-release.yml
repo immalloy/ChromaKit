@@ -108,6 +108,10 @@ jobs:
               --prerelease
           fi
 
+          gh release view snapshot --json assets --jq '.assets[].name' | while read -r asset; do
+            gh release delete-asset snapshot "$asset" --yes
+          done
+
           find release-assets -type f -print0 | while IFS= read -r -d '' asset; do
             gh release upload snapshot "$asset" --clobber
           done

@@ -76,8 +76,6 @@ jobs:
           built_at="$(date -u +"%Y-%m-%d %H:%M UTC")"
 
           cat > release-notes.md <<'NOTES'
-          # Latest Dev Build
-
           This prerelease is rebuilt automatically from the latest commit on `main`.
           It is meant for testing new changes before a normal tagged release.
 

@@ -13,6 +13,7 @@ authors = [
   { name = "ChromaKit contributors" }
 ]
 dependencies = [
+  "numpy",
   "praat-parselmouth",
   "PySide6"
 ]

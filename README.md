@@ -15,6 +15,18 @@
 
 ChromaKit is a simple app for making Friday Night Funkin' chromatic scales.
 
+## Downloads
+
+<p align="center">
+  <a href="https://nightly.link/immalloy/ChromaKit/workflows/snapshot-release/main/chromakit-Windows.zip"><img alt="Windows build" src="https://img.shields.io/badge/Windows-Download-0A8CE6?logo=windows&logoColor=white"></a>
+  <a href="https://nightly.link/immalloy/ChromaKit/workflows/snapshot-release/main/chromakit-macOS.zip"><img alt="macOS build" src="https://img.shields.io/badge/macOS-Download-0D1524?logo=apple&logoColor=white"></a>
+  <a href="https://nightly.link/immalloy/ChromaKit/workflows/snapshot-release/main/chromakit-Linux.zip"><img alt="Linux build" src="https://img.shields.io/badge/Linux-Download-FCC624?logo=linux&logoColor=0D1524"></a>
+</p>
+
+<p align="center">
+  <a href="https://nightly.link/immalloy/ChromaKit/workflows/snapshot-release/main?preview">All latest dev builds</a>
+</p>
+
 ## Docs
 
 - [What is this?](docs/what-is-this.md)

@@ -45,6 +45,11 @@ NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 OCTAVES = [str(value) for value in range(0, 9)]
 SAMPLE_RATES = ["48000", "44100"]
 ORDER_MODES = ["sequential", "shuffle", "random"]
+AUDIO_STYLES = {
+	"Current": "Hybrid pitch - current ChromaKit behavior",
+	"OG App": "Original app pitch - Praat formula at 48 kHz",
+	"Praat": "Praat pitch - no low-note FFT fallback",
+}
 DEFAULT_SAMPLE_RATE = 48000
 LOW_NOTE_FFT_THRESHOLD = 60.0
 BRAND_CHROMA_COLOR = "#0D1524"
@@ -86,6 +91,7 @@ class GenerationSettings:
 	pitch_samples: bool
 	dump_samples: bool
 	order_mode: str
+	audio_style: str
 	trim_silence: bool
 	normalize: bool
 	fade_ms: int
@@ -223,7 +229,11 @@ def pad_or_trim(sound: parselmouth.Sound, length_seconds: float, sample_rate: in
 	return parselmouth.Sound.concatenate([current, padding])
 
 
-def retune_sound(sound: parselmouth.Sound, target_frequency: float) -> parselmouth.Sound:
+def retune_sound(sound: parselmouth.Sound, target_frequency: float, audio_style: str) -> parselmouth.Sound:
+	if audio_style == "OG App":
+		return retune_with_og_app(sound, target_frequency)
+	if audio_style == "Praat":
+		return retune_with_praat(sound, target_frequency)
 	if target_frequency < LOW_NOTE_FFT_THRESHOLD:
 		retuned = retune_with_fft(sound, target_frequency)
 		if retuned is not None:
@@ -239,6 +249,14 @@ def retune_with_praat(sound: parselmouth.Sound, target_frequency: float) -> pars
 	parselmouth.praat.call(pitch_tier, "Remove points between", sound.xmin, sound.xmax)
 	parselmouth.praat.call(pitch_tier, "Add point", sound.xmin, target_frequency)
 	parselmouth.praat.call(pitch_tier, "Add point", max(sound.xmax, sound.xmin + 0.000001), target_frequency)
+	parselmouth.praat.call([pitch_tier, manipulation], "Replace pitch tier")
+	return parselmouth.praat.call(manipulation, "Get resynthesis (overlap-add)")
+
+
+def retune_with_og_app(sound: parselmouth.Sound, target_frequency: float) -> parselmouth.Sound:
+	manipulation = parselmouth.praat.call(sound, "To Manipulation", 0.05, 60.0, 600.0)
+	pitch_tier = parselmouth.praat.call(manipulation, "Extract pitch tier")
+	parselmouth.praat.call(pitch_tier, "Formula", f"{target_frequency:.12g}")
 	parselmouth.praat.call([pitch_tier, manipulation], "Replace pitch tier")
 	return parselmouth.praat.call(manipulation, "Get resynthesis (overlap-add)")
 
@@ -380,7 +398,7 @@ def generate_chromatic(
 		on_log(f"Found {len(files)} source WAV file(s).")
 		on_log(
 			f"Semitones: {settings.semitones} | Gap: {settings.gap_seconds:.3f}s | "
-			f"Order: {settings.order_mode} | Output: {settings.output_sample_rate} Hz"
+			f"Order: {settings.order_mode} | Style: {settings.audio_style} | Output: {settings.output_sample_rate} Hz"
 		)
 		for offset, source_index in enumerate(indexes):
 			if should_cancel():
@@ -398,8 +416,8 @@ def generate_chromatic(
 				sound = peak_normalize(sound)
 				on_log("  normalized")
 			if settings.pitch_samples:
-				sound = retune_sound(sound, note_frequency(settings.start_note_index, settings.start_octave, offset))
-				on_log("  pitched")
+				sound = retune_sound(sound, note_frequency(settings.start_note_index, settings.start_octave, offset), settings.audio_style)
+				on_log(f"  pitched ({settings.audio_style})")
 			if settings.fade_ms > 0:
 				sound = apply_fade(sound, settings.fade_ms)
 				on_log(f"  fade {settings.fade_ms} ms")
@@ -705,6 +723,9 @@ class GeneratorWindow(QMainWindow):
 		self.pitch_input.setChecked(True)
 		self.dump_input = QCheckBox("Dump individual samples")
 		self.dump_input.setChecked(True)
+		self.audio_style_input = QComboBox()
+		self.audio_style_input.addItems(list(AUDIO_STYLES))
+		self.audio_style_input.setToolTip("Choose the pitch processing style used while generating notes.")
 		self.trim_silence_input = QCheckBox("Trim silence from samples")
 		self.normalize_input = QCheckBox("Peak normalize before pitch")
 		self.slicex_input = QCheckBox("Embed FL Studio Slicex markers")
@@ -717,15 +738,17 @@ class GeneratorWindow(QMainWindow):
 		options = QGridLayout(options_group)
 		options.addWidget(self.pitch_input, 0, 0)
 		options.addWidget(self.dump_input, 0, 1)
-		options.addWidget(self.trim_silence_input, 1, 0)
-		options.addWidget(self.normalize_input, 1, 1)
-		options.addWidget(self.slicex_input, 2, 0, 1, 2)
-		options.addWidget(QLabel("Fade in/out (ms):"), 3, 0)
-		options.addWidget(self.fade_input, 3, 1)
-		options.addWidget(QLabel("Fixed note length (s):"), 4, 0)
-		options.addWidget(self.fixed_length_input, 4, 1)
-		options.addWidget(QLabel("Output sample rate:"), 5, 0)
-		options.addWidget(self.sample_rate_input, 5, 1)
+		options.addWidget(QLabel("Audio style:"), 1, 0)
+		options.addWidget(self.audio_style_input, 1, 1)
+		options.addWidget(self.trim_silence_input, 2, 0)
+		options.addWidget(self.normalize_input, 2, 1)
+		options.addWidget(self.slicex_input, 3, 0, 1, 2)
+		options.addWidget(QLabel("Fade in/out (ms):"), 4, 0)
+		options.addWidget(self.fade_input, 4, 1)
+		options.addWidget(QLabel("Fixed note length (s):"), 5, 0)
+		options.addWidget(self.fixed_length_input, 5, 1)
+		options.addWidget(QLabel("Output sample rate:"), 6, 0)
+		options.addWidget(self.sample_rate_input, 6, 1)
 		processing_tab = QWidget()
 		processing_tab_layout = QVBoxLayout(processing_tab)
 		processing_tab_layout.setContentsMargins(8, 8, 8, 8)
@@ -955,6 +978,7 @@ class GeneratorWindow(QMainWindow):
 				"order": self.order_input.currentText(),
 				"pitch_samples": self.pitch_input.isChecked(),
 				"dump_samples": self.dump_input.isChecked(),
+				"audio_style": self.audio_style_input.currentText(),
 				"trim_silence": self.trim_silence_input.isChecked(),
 				"normalize": self.normalize_input.isChecked(),
 				"slicex_markers": self.slicex_input.isChecked(),
@@ -1009,6 +1033,7 @@ class GeneratorWindow(QMainWindow):
 			self.order_input.setCurrentText(str(generate.get("order", self.order_input.currentText())))
 			self.pitch_input.setChecked(bool(generate.get("pitch_samples", self.pitch_input.isChecked())))
 			self.dump_input.setChecked(bool(generate.get("dump_samples", self.dump_input.isChecked())))
+			self.audio_style_input.setCurrentText(str(generate.get("audio_style", self.audio_style_input.currentText())))
 			self.trim_silence_input.setChecked(bool(generate.get("trim_silence", self.trim_silence_input.isChecked())))
 			self.normalize_input.setChecked(bool(generate.get("normalize", self.normalize_input.isChecked())))
 			self.slicex_input.setChecked(bool(generate.get("slicex_markers", self.slicex_input.isChecked())))
@@ -1116,6 +1141,7 @@ class GeneratorWindow(QMainWindow):
 			pitch_samples=self.pitch_input.isChecked(),
 			dump_samples=self.dump_input.isChecked(),
 			order_mode=self.order_input.currentText(),
+			audio_style=self.audio_style_input.currentText(),
 			trim_silence=self.trim_silence_input.isChecked(),
 			normalize=self.normalize_input.isChecked(),
 			fade_ms=fade_ms,
@@ -1235,6 +1261,7 @@ class GeneratorWindow(QMainWindow):
 			self.order_input,
 			self.pitch_input,
 			self.dump_input,
+			self.audio_style_input,
 			self.trim_silence_input,
 			self.normalize_input,
 			self.slicex_input,

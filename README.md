@@ -41,6 +41,20 @@ ChromaKit is a simple app for making Friday Night Funkin' chromatic scales.
 
 Need the more understandable tutorial? Read the [beginner tutorial](docs/tutorial.md).
 
+## Made With
+
+> [!NOTE]
+> ChromaKit was designed and built using:
+>
+> * **[PySide6 Designer](https://doc.qt.io/qtforpython-6/tools/pyside-designer.html)**
+> * **[PySide6](https://doc.qt.io/qtforpython-6/)**
+> * **[Python](https://www.python.org/)**
+> * **[Photopea](https://www.photopea.com/)**
+> * **[SVG Repo](https://www.svgrepo.com/)**
+>
+> ChromaKit’s design resources are available in the **[ChromaKit Art repository](https://github.com/immalloy/ChromaKit-Art)**.
+
+
 ## License
 
 ChromaKit is licensed under the GPL-3.0-or-later license.
@@ -48,3 +62,4 @@ ChromaKit is licensed under the GPL-3.0-or-later license.
 ## Credits
 
 ChromaKit is created by immalloy. It is built from [Chromatic Scale Generator](https://gamebanana.com/tools/8906) by ChillSpace and inspired by [Chromatic Scale Generator PLUS! (REVIVED)](https://gamebanana.com/tools/20901) and [(CANCELLED) Chromatic Scale Generator DELUXE](https://gamebanana.com/tools/20598).
+

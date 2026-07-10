@@ -49,6 +49,7 @@ AUDIO_STYLES = {
 	"Current": "Hybrid pitch - current ChromaKit behavior",
 	"OG App": "Original app pitch - Praat formula at 48 kHz",
 	"Praat": "Praat pitch - no low-note FFT fallback",
+	"Formant corrected": "Praat Change gender - preserve formants while shifting pitch",
 }
 DEFAULT_SAMPLE_RATE = 48000
 LOW_NOTE_FFT_THRESHOLD = 60.0
@@ -232,6 +233,8 @@ def pad_or_trim(sound: parselmouth.Sound, length_seconds: float, sample_rate: in
 def retune_sound(sound: parselmouth.Sound, target_frequency: float, audio_style: str) -> parselmouth.Sound:
 	if audio_style == "OG App":
 		return retune_with_og_app(sound, target_frequency)
+	if audio_style == "Formant corrected":
+		return retune_with_formant_correction(sound, target_frequency)
 	if audio_style == "Praat":
 		return retune_with_praat(sound, target_frequency)
 	if target_frequency < LOW_NOTE_FFT_THRESHOLD:
@@ -259,6 +262,27 @@ def retune_with_og_app(sound: parselmouth.Sound, target_frequency: float) -> par
 	parselmouth.praat.call(pitch_tier, "Formula", f"{target_frequency:.12g}")
 	parselmouth.praat.call([pitch_tier, manipulation], "Replace pitch tier")
 	return parselmouth.praat.call(manipulation, "Get resynthesis (overlap-add)")
+
+
+def retune_with_formant_correction(sound: parselmouth.Sound, target_frequency: float) -> parselmouth.Sound:
+	"""Shift the pitch median while leaving the formant frequencies unchanged.
+
+	Praat's Change gender resynthesis applies the pitch change through overlap-add
+	and accepts a formant shift ratio separately. A ratio of 1.0 means no formant
+	shift, while the new pitch median moves the source into the requested note.
+	"""
+	pitch_floor = 37.5 if target_frequency < LOW_NOTE_FFT_THRESHOLD else 60.0
+	pitch_ceiling = 1200.0 if target_frequency < LOW_NOTE_FFT_THRESHOLD else 600.0
+	return parselmouth.praat.call(
+		sound,
+		"Change gender...",
+		pitch_floor,
+		pitch_ceiling,
+		1.0,
+		target_frequency,
+		1.0,
+		1.0,
+	)
 
 
 def retune_with_fft(sound: parselmouth.Sound, target_frequency: float) -> parselmouth.Sound | None:
@@ -725,6 +749,7 @@ class GeneratorWindow(QMainWindow):
 		self.dump_input.setChecked(True)
 		self.audio_style_input = QComboBox()
 		self.audio_style_input.addItems(list(AUDIO_STYLES))
+		self.audio_style_input.setCurrentText("Formant corrected")
 		self.audio_style_input.setToolTip("Choose the pitch processing style used while generating notes.")
 		self.trim_silence_input = QCheckBox("Trim silence from samples")
 		self.normalize_input = QCheckBox("Peak normalize before pitch")

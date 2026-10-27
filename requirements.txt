@@ -1,4 +1,0 @@
-numpy
-praat-parselmouth
-PySide6
-pyinstaller

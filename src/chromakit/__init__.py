@@ -1,1 +1,0 @@
-"""ChromaKit desktop application package."""

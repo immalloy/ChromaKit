@@ -82,4 +82,8 @@ target_compile_definitions(chromakit PRIVATE NOMINMAX)
 if(WIN32)
   target_link_libraries(chromakit PRIVATE advapi32 dwmapi)
 endif()
+if(APPLE)
+  find_library(ACCELERATE_FRAMEWORK Accelerate REQUIRED)
+  target_link_libraries(chromakit PRIVATE ${ACCELERATE_FRAMEWORK})
+endif()
 

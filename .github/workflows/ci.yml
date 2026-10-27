@@ -2,6 +2,9 @@ name: Build
 
 on:
   push:
+    branches:
+      - main
+      - legacy
   pull_request:
   workflow_dispatch:
 
@@ -16,6 +19,7 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -65,9 +69,9 @@ jobs:
       - name: Build Windows
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --target chromakit --config Release --parallel
 
       - name: Build Unix
         if: matrix.platform != 'windows'
         shell: bash
-        run: cmake --build build --parallel
+        run: cmake --build build --target chromakit --parallel

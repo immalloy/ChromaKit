@@ -16,6 +16,7 @@ jobs:
   package:
     name: Package ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -65,12 +66,12 @@ jobs:
       - name: Build Windows
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --target chromakit --config Release --parallel
 
       - name: Build Unix
         if: matrix.platform != 'windows'
         shell: bash
-        run: cmake --build build --parallel
+        run: cmake --build build --target chromakit --parallel
 
       - name: Package Windows
         if: matrix.platform == 'windows'
@@ -81,6 +82,7 @@ jobs:
           Copy-Item README.md package/README.md
           Copy-Item CHANGELOG.md package/CHANGELOG.md
           cmake -E tar cfv chromakit-windows.zip --format=zip package
+          if (-not (Test-Path chromakit-windows.zip)) { throw 'Windows package was not created' }
 
       - name: Package Unix
         if: matrix.platform != 'windows'
@@ -92,6 +94,7 @@ jobs:
           cp README.md package/README.md
           cp CHANGELOG.md package/CHANGELOG.md
           cmake -E tar cfv chromakit-${{ matrix.platform }}.zip --format=zip package
+          test -s chromakit-${{ matrix.platform }}.zip
 
       - name: Upload package
         uses: actions/upload-artifact@v4
@@ -106,7 +109,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    timeout-minutes: 10
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
       - name: Download packages
         uses: actions/download-artifact@v4
         with:

@@ -79,4 +79,7 @@ if(WIN32)
 endif()
 target_link_libraries(chromakit PRIVATE chromakit_audio fltk::fltk nfd)
 target_compile_definitions(chromakit PRIVATE NOMINMAX)
+if(WIN32)
+  target_link_libraries(chromakit PRIVATE advapi32 dwmapi)
+endif()
 

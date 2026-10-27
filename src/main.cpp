@@ -11,6 +11,13 @@
 #include <FL/Fl_Progress.H>
 #include <FL/Fl_Box.H>
 
+#ifdef _WIN32
+#include <FL/platform.H>
+#include <dwmapi.h>
+#include <windows.h>
+#include "../resources/resource.h"
+#endif
+
 #include <cstdlib>
 #include <cerrno>
 #include <iostream>
@@ -41,6 +48,22 @@ int parse_int(const char* value, const char* name) {
     return static_cast<int>(parsed);
 }
 
+#ifdef _WIN32
+bool windows_dark_mode() {
+    DWORD use_light_theme = 1;
+    DWORD size = sizeof(use_light_theme);
+    const auto result = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &use_light_theme,
+        &size);
+    return result == ERROR_SUCCESS && use_light_theme == 0;
+}
+#endif
+
 double parse_double(const char* value, const char* name) {
     if (!value || *value == '\0') throw std::runtime_error(std::string("invalid ") + name);
     errno = 0;
@@ -65,7 +88,7 @@ int run_generation(const GeneratorSettings& settings) {
 struct Ui {
     Fl_Input* folder = nullptr;
     Fl_Choice* note = nullptr;
-    Fl_Input* octave = nullptr;
+    Fl_Choice* octave = nullptr;
     Fl_Input* range = nullptr;
     Fl_Input* gap = nullptr;
     Fl_Check_Button* pitched = nullptr;
@@ -101,7 +124,7 @@ void generate_cb(Fl_Widget*, void* raw) {
     try {
         GeneratorSettings settings;
         settings.sample_folder = ui->folder->value();
-        settings.start_midi = note_index(ui->note->text()) + 12 * parse_int(ui->octave->value(), "octave") + 12;
+        settings.start_midi = note_index(ui->note->text()) + 12 * parse_int(ui->octave->text(), "octave") + 12;
         settings.range = parse_int(ui->range->value(), "range");
         settings.gap_seconds = parse_double(ui->gap->value(), "gap");
         settings.pitched = ui->pitched->value() != 0;
@@ -121,26 +144,57 @@ void generate_cb(Fl_Widget*, void* raw) {
 
 int run_gui(int argc, char** argv) {
     Fl::scheme("gtk+");
-    auto* window = new Fl_Double_Window(600, 500, "Chromakit");
+#ifdef _WIN32
+    const bool dark_mode = windows_dark_mode();
+    if (dark_mode) {
+        Fl::background(31, 31, 31);
+        Fl::background2(47, 47, 47);
+        Fl::foreground(235, 235, 235);
+        Fl::set_color(FL_SELECTION_COLOR, 70, 145, 230);
+    }
+#endif
+    auto* window = new Fl_Double_Window(600, 390, "Chromakit");
+#ifdef _WIN32
+    const HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_CHROMAKIT));
+    if (icon) window->icons(icon, icon);
+#endif
     Ui ui;
     auto* title = new Fl_Box(20, 18, 560, 36, "Chromakit");
     title->labelfont(FL_BOLD); title->labelsize(25);
     new Fl_Box(25, 78, 110, 28, "Sample folder:");
     ui.folder = new Fl_Input(145, 78, 345, 28);
     auto* browse = new Fl_Button(500, 78, 75, 28, "Browse"); browse->callback(browse_cb, &ui);
-    new Fl_Box(25, 125, 110, 28, "Starting note:");
-    ui.note = new Fl_Choice(145, 125, 120, 28);
+    new Fl_Box(25, 125, 100, 28, "Starting note:");
+    ui.note = new Fl_Choice(125, 125, 120, 28);
     for (const char* name : {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}) ui.note->add(name);
     ui.note->value(0);
-    new Fl_Box(25, 170, 110, 28, "Starting octave:"); ui.octave = new Fl_Input(145, 170, 120, 28); ui.octave->value("2");
-    new Fl_Box(25, 215, 110, 28, "Range:"); ui.range = new Fl_Input(145, 215, 120, 28); ui.range->value("24");
-    new Fl_Box(25, 260, 110, 28, "Gap (seconds):"); ui.gap = new Fl_Input(145, 260, 120, 28); ui.gap->value("0.1");
-    ui.pitched = new Fl_Check_Button(25, 310, 220, 28, "Pitch samples"); ui.pitched->value(1);
-    ui.dump = new Fl_Check_Button(25, 345, 270, 28, "Export individual files"); ui.dump->value(1);
-    auto* generate = new Fl_Button(25, 390, 550, 34, "Generate Chromatic"); generate->callback(generate_cb, &ui);
-    ui.progress = new Fl_Progress(25, 440, 550, 22); ui.progress->minimum(0); ui.progress->maximum(100);
-    ui.status = new Fl_Box(25, 465, 550, 25, "Ready"); ui.status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    window->end(); window->resizable(window); window->show(argc, argv); return Fl::run();
+    new Fl_Box(275, 125, 60, 28, "Octave:");
+    ui.octave = new Fl_Choice(340, 125, 120, 28);
+    for (const char* octave : {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}) ui.octave->add(octave);
+    ui.octave->value(2);
+    new Fl_Box(25, 170, 100, 28, "Range:"); ui.range = new Fl_Input(125, 170, 120, 28); ui.range->value("24");
+    new Fl_Box(275, 170, 100, 28, "Gap (seconds):"); ui.gap = new Fl_Input(380, 170, 120, 28); ui.gap->value("0.1");
+    ui.pitched = new Fl_Check_Button(25, 220, 200, 28, "Pitch samples"); ui.pitched->value(1);
+    ui.dump = new Fl_Check_Button(250, 220, 300, 28, "Export individual files"); ui.dump->value(1);
+    auto* generate = new Fl_Button(25, 265, 550, 34, "Generate Chromatic"); generate->callback(generate_cb, &ui);
+    ui.progress = new Fl_Progress(25, 315, 550, 22); ui.progress->minimum(0); ui.progress->maximum(100);
+    ui.status = new Fl_Box(25, 345, 550, 25, "Ready"); ui.status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    window->end();
+    window->show(argc, argv);
+#ifdef _WIN32
+    const HWND handle = fl_win32_xid(window);
+    if (handle) {
+        if (icon) {
+            SendMessageW(handle, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+            SendMessageW(handle, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+        }
+        const BOOL use_dark_title_bar = dark_mode ? TRUE : FALSE;
+        if (DwmSetWindowAttribute(handle, 20, &use_dark_title_bar, sizeof(use_dark_title_bar)) != S_OK) {
+            DwmSetWindowAttribute(handle, 19, &use_dark_title_bar, sizeof(use_dark_title_bar));
+        }
+    }
+#endif
+    return Fl::run();
 }
 
 }

@@ -79,6 +79,7 @@ jobs:
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item build/Release/chromakit.exe package/chromakit.exe
           Copy-Item README.md package/README.md
+          Copy-Item CHANGELOG.md package/CHANGELOG.md
           cmake -E tar cfv chromakit-windows.zip --format=zip package
 
       - name: Package Unix
@@ -89,6 +90,7 @@ jobs:
           mkdir package
           cp build/chromakit package/chromakit
           cp README.md package/README.md
+          cp CHANGELOG.md package/CHANGELOG.md
           cmake -E tar cfv chromakit-${{ matrix.platform }}.zip --format=zip package
 
       - name: Upload package
@@ -112,7 +114,17 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          awk -v tag="$GITHUB_REF_NAME" '
+            $0 == "## " tag { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --title "Chromakit $GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag

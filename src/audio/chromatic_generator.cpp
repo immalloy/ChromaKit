@@ -96,6 +96,11 @@ GenerationReport generate_chromatic(const GeneratorSettings& settings, ProgressC
     std::vector<float> chromatic;
     const size_t gap_frames = static_cast<size_t>(std::llround(settings.gap_seconds * sample_rate));
     std::vector<AudioBuffer> generated(static_cast<size_t>(settings.range));
+    const auto output_folder = settings.sample_folder / "pitched_samples";
+    if (settings.dump_individual) {
+        std::filesystem::create_directories(output_folder);
+        clear_generated_samples(output_folder);
+    }
     const auto render_note = [&](int note) {
         const size_t source_index = static_cast<size_t>(note) % originals.size();
         const auto& source = originals[source_index];
@@ -117,24 +122,24 @@ GenerationReport generate_chromatic(const GeneratorSettings& settings, ProgressC
         for (size_t offset = 0; offset < pending.size(); ++offset) {
             const size_t note = batch_start + offset;
             generated[note] = pending[offset].get();
+            if (settings.dump_individual) {
+                std::ostringstream name;
+                name << "pitched_" << std::setw(3) << std::setfill('0') << note + 1 << ".wav";
+                write_wav(output_folder / name.str(), generated[note]);
+                report(progress, 20 + (static_cast<int>(note + 1) * 75 / settings.range),
+                       "Saved " + name.str() + " (note " + std::to_string(settings.start_midi + static_cast<int>(note)) + ", " +
+                           std::to_string(note + 1) + "/" + std::to_string(settings.range) + ")");
+            } else {
+                report(progress, 20 + (static_cast<int>(note + 1) * 75 / settings.range),
+                       "Rendered note " + std::to_string(settings.start_midi + static_cast<int>(note)) + " (" +
+                           std::to_string(note + 1) + "/" + std::to_string(settings.range) + ")");
+            }
             append(chromatic, generated[note]);
             if (note + 1 < generated.size()) chromatic.insert(chromatic.end(), gap_frames * channels, 0.0f);
-            report(progress, 20 + (static_cast<int>(note + 1) * 75 / settings.range),
-                   "Rendering note " + std::to_string(settings.start_midi + static_cast<int>(note)));
         }
     }
 
     write_wav(result.chromatic_path, {sample_rate, channels, std::move(chromatic)});
-    if (settings.dump_individual) {
-        const auto output_folder = settings.sample_folder / "pitched_samples";
-        std::filesystem::create_directories(output_folder);
-        clear_generated_samples(output_folder);
-        for (size_t index = 0; index < generated.size(); ++index) {
-            std::ostringstream name;
-            name << "pitched_" << std::setw(3) << std::setfill('0') << index + 1 << ".wav";
-            write_wav(output_folder / name.str(), generated[index]);
-        }
-    }
     result.output_notes = generated.size();
     report(progress, 100, "Finished: " + result.chromatic_path.string());
     return result;

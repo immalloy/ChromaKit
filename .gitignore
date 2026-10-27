@@ -1,0 +1,7 @@
+build/
+out/
+artifacts/
+_deps/
+*.user
+*.suo
+

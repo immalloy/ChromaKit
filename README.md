@@ -7,7 +7,13 @@ Chromakit was previously developed under the codename Auralis.
 > [!WARNING]
 > Chromakit is in alpha. It is still barebones and will get updates as the app grows.
 
-![Chromakit](resources/chromakit-ui.png)
+Light mode:
+
+![Chromakit light mode](resources/chromakit-ui.png)
+
+Dark mode:
+
+![Chromakit dark mode](resources/chromakit-ui-dark.png)
 
 See the [release log](CHANGELOG.md) for changes in each version.
 

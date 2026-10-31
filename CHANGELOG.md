@@ -2,6 +2,11 @@
 
 This is the short version of what changed for people using the app.
 
+## v1.2.0
+
+ChromaKit rebuilt has been finished in Rust and the ui in egui (Thank u Dave for the ref).
+Implemented Volume sustaining and improvements to rendering speed
+
 ## v1.1.1
 
 This release fixes the build and release workflows.

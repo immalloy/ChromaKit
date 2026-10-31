@@ -2,6 +2,7 @@ build/
 out/
 artifacts/
 _deps/
+target/
 *.user
 *.suo
 

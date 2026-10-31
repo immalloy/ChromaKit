@@ -15,10 +15,23 @@ permissions:
   contents: read
 
 jobs:
-  windows-x64:
-    name: Windows x64
-    runs-on: windows-latest
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            platform: windows
+            os: windows-latest
+          - name: Linux x64
+            platform: linux
+            os: ubuntu-latest
+          - name: macOS
+            platform: macos
+            os: macos-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -31,10 +44,34 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Format and build
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev pkg-config
+          libclang_dir="$(dirname "$(find /usr/lib -name libclang.so -print -quit)")"
+          echo "LIBCLANG_PATH=$libclang_dir" >> "$GITHUB_ENV"
+
+      - name: Install macOS libclang
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          brew install llvm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+
+      - name: Format and build on Windows
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $clang = Get-Command clang.exe -ErrorAction Stop
           $env:LIBCLANG_PATH = Split-Path $clang.Source
+          cargo fmt --all -- --check
+          cargo build --locked --release --bin chromakit
+
+      - name: Format and build on Linux or macOS
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
           cargo fmt --all -- --check
           cargo build --locked --release --bin chromakit

@@ -2,6 +2,10 @@
 
 This is the short version of what changed for people using the app.
 
+## v1.2.1
+
+Fixed the release workflow.
+
 ## v1.2.0
 
 ChromaKit rebuilt has been finished in Rust and the ui in egui (Thank u Dave for the ref).

@@ -1,27 +1,36 @@
-name: Package Windows Release
+name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to package (for example, v1.2.0)
-        required: true
-        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   package:
-    name: Build and package Windows x64
-    runs-on: windows-latest
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            os: windows-latest
+          - platform: linux-x64
+            os: ubuntu-latest
+          - platform: macos
+            os: macos-latest
     steps:
-      - name: Check out tagged source
+      - name: Check out source
         uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag }}
-          fetch-depth: 0
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -29,25 +38,87 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Build Windows x64 application
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev pkg-config
+          echo "LIBCLANG_PATH=$(dirname "$(find /usr/lib -name libclang.so -print -quit)")" >> "$GITHUB_ENV"
+
+      - name: Install macOS libclang
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          brew install llvm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+
+      - name: Build Windows x64
+        if: matrix.platform == 'windows-x64'
         shell: pwsh
         run: |
           $clang = Get-Command clang.exe -ErrorAction Stop
           $env:LIBCLANG_PATH = Split-Path $clang.Source
           cargo build --locked --release --bin chromakit
 
+      - name: Build Linux or macOS
+        if: matrix.platform != 'windows-x64'
+        shell: bash
+        run: cargo build --locked --release --bin chromakit
+
       - name: Package application
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          Copy-Item target/release/chromakit.exe package/chromakit.exe
+          $binary = if ('${{ matrix.platform }}' -eq 'windows-x64') { 'chromakit.exe' } else { 'chromakit' }
+          Copy-Item "target/release/$binary" "package/$binary"
           Copy-Item README.md package/README.md
           Copy-Item CHANGELOG.md package/CHANGELOG.md
-          Compress-Archive -Path package/* -DestinationPath chromakit-windows-x64.zip -Force
+          Compress-Archive -Path package/* -DestinationPath "chromakit-${{ matrix.platform }}.zip" -Force
 
-      - name: Upload package artifact
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: chromakit-windows-x64-${{ inputs.tag }}
-          path: chromakit-windows-x64.zip
+          name: chromakit-${{ matrix.platform }}
+          path: chromakit-${{ matrix.platform }}.zip
           if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chromakit-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          awk -v tag="$GITHUB_REF_NAME" '
+            $0 == "## " tag { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ChromaKit $GITHUB_REF_NAME" --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --title "ChromaKit $GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag
+          fi

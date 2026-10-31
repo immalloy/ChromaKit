@@ -1,1 +1,0 @@
-#define IDI_CHROMAKIT 101

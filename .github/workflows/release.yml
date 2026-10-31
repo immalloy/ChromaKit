@@ -1,137 +1,53 @@
-name: Release
+name: Package Windows Release
 
 on:
-  push:
-    tags:
-      - 'v*'
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to package (for example, v1.2.0)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   package:
-    name: Package ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
+    name: Build and package Windows x64
+    runs-on: windows-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows
-            os: windows-latest
-          - platform: linux
-            os: ubuntu-latest
-          - platform: macos
-            os: macos-latest
-
     steps:
-      - name: Check out source
+      - name: Check out tagged source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'linux'
-        shell: bash
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Windows x64 application
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libx11-dev \
-            libxext-dev \
-            libxft-dev \
-            libxinerama-dev \
-            libxcursor-dev \
-            libxfixes-dev \
-            libxrender-dev \
-            libxdamage-dev \
-            libxrandr-dev \
-            libxcomposite-dev \
-            libgtk-3-dev \
-            libwayland-dev \
-            libwayland-bin \
-            wayland-protocols
+          $clang = Get-Command clang.exe -ErrorAction Stop
+          $env:LIBCLANG_PATH = Split-Path $clang.Source
+          cargo build --locked --release --bin chromakit
 
-      - name: Configure Windows
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: cmake -S . -B build
-
-      - name: Configure Unix
-        if: matrix.platform != 'windows'
-        shell: bash
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build Windows
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: cmake --build build --target chromakit --config Release --parallel
-
-      - name: Build Unix
-        if: matrix.platform != 'windows'
-        shell: bash
-        run: cmake --build build --target chromakit --parallel
-
-      - name: Package Windows
-        if: matrix.platform == 'windows'
+      - name: Package application
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          Copy-Item build/Release/chromakit.exe package/chromakit.exe
+          Copy-Item target/release/chromakit.exe package/chromakit.exe
           Copy-Item README.md package/README.md
           Copy-Item CHANGELOG.md package/CHANGELOG.md
-          cmake -E tar cfv chromakit-windows.zip --format=zip package
-          if (-not (Test-Path chromakit-windows.zip)) { throw 'Windows package was not created' }
+          Compress-Archive -Path package/* -DestinationPath chromakit-windows-x64.zip -Force
 
-      - name: Package Unix
-        if: matrix.platform != 'windows'
-        shell: bash
-        run: |
-          rm -rf package
-          mkdir package
-          cp build/chromakit package/chromakit
-          cp README.md package/README.md
-          cp CHANGELOG.md package/CHANGELOG.md
-          cmake -E tar cfv chromakit-${{ matrix.platform }}.zip --format=zip package
-          test -s chromakit-${{ matrix.platform }}.zip
-
-      - name: Upload package
+      - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: chromakit-${{ matrix.platform }}
-          path: chromakit-${{ matrix.platform }}.zip
+          name: chromakit-windows-x64-${{ inputs.tag }}
+          path: chromakit-windows-x64.zip
           if-no-files-found: error
-
-  publish:
-    name: Publish GitHub release
-    needs: package
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    timeout-minutes: 10
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Download packages
-        uses: actions/download-artifact@v4
-        with:
-          pattern: chromakit-*
-          path: release-assets
-          merge-multiple: true
-
-      - name: Prepare release notes
-        shell: bash
-        run: |
-          awk -v tag="$GITHUB_REF_NAME" '
-            $0 == "## " tag { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
-          test -s release-notes.md
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --title "Chromakit $GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag

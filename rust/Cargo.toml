@@ -1,0 +1,16 @@
+[package]
+name = "chromakit"
+version = "0.1.0"
+edition = "2024"
+default-run = "chromakit"
+
+[lib]
+name = "chromakit_rs"
+path = "src/lib.rs"
+
+[dependencies]
+hound = "3.5.1"
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow"] }
+rfd = { version = "0.15", default-features = false }
+rubberband = "0.1.5"
+rustfft = "6.4.1"

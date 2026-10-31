@@ -327,48 +327,52 @@ impl eframe::App for ChromaKitApp {
                             ui.checkbox(&mut self.auto_level, "Fix volume drops");
                         });
                     });
-                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.add_space(8.0);
+                    let generate = egui::Button::new(
+                        egui::RichText::new("Generate chromatic WAVs").strong(),
+                    );
+                    let generate_clicked = ui
+                        .add_enabled_ui(!self.running, |ui| {
+                            ui.add_sized([ui.available_width(), 40.0], generate)
+                        })
+                        .inner
+                        .clicked();
+                    if generate_clicked {
+                        self.start_generation(&ctx);
+                    }
 
-                let generate =
-                    egui::Button::new(egui::RichText::new("Generate chromatic WAVs").strong());
-                let generate_clicked = ui
-                    .add_enabled_ui(!self.running, |ui| {
-                        ui.add_sized([ui.available_width(), 40.0], generate)
-                    })
-                    .inner
-                    .clicked();
-                if generate_clicked {
-                    self.start_generation(&ctx);
-                }
-
-                if self.running {
-                    ui.add_space(4.0);
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let width = (ui.available_width() - 132.0).max(32.0);
-                        ui.add_sized(
-                            [width, 22.0],
-                            egui::ProgressBar::new(f32::from(self.progress.min(100)) / 100.0)
+                    if self.running {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 132.0).max(32.0);
+                            ui.add_sized(
+                                [width, 22.0],
+                                egui::ProgressBar::new(
+                                    f32::from(self.progress.min(100)) / 100.0,
+                                )
                                 .fill(ui.visuals().widgets.inactive.weak_bg_fill),
-                        );
-                        ui.label(format!("{}%", self.progress.min(100)));
-                        if ui.button("Cancel").clicked()
-                            && let Some(cancelled) = &self.cancelled
-                        {
-                            cancelled.store(true, Ordering::Relaxed);
-                            self.status = "Cancelling after the current notes finish…".into();
-                        }
-                    });
-                    ui.label(&self.status);
-                } else if self.status.starts_with("Complete:")
-                    || self.status.starts_with("Generation cancelled")
-                {
-                    ui.add_space(6.0);
-                    ui.label(&self.status);
-                }
-                if let Some(error) = &self.error_message {
-                    ui.add_space(6.0);
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
+                            );
+                            ui.label(format!("{}%", self.progress.min(100)));
+                            if ui.button("Cancel").clicked()
+                                && let Some(cancelled) = &self.cancelled
+                            {
+                                cancelled.store(true, Ordering::Relaxed);
+                                self.status = "Cancelling after the current notes finish…".into();
+                            }
+                        });
+                        ui.label(&self.status);
+                    } else if self.status.starts_with("Complete:")
+                        || self.status.starts_with("Generation cancelled")
+                    {
+                        ui.add_space(6.0);
+                        ui.label(&self.status);
+                    }
+                    if let Some(error) = &self.error_message {
+                        ui.add_space(6.0);
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                });
             });
         });
         if self.running {

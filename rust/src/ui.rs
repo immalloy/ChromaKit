@@ -35,6 +35,8 @@ pub struct ChromaKitApp {
     gap_text: String,
     pitch_samples: bool,
     export_individual: bool,
+    normalize_volume: bool,
+    add_markers: bool,
     auto_level: bool,
     dark_mode: bool,
     running: bool,
@@ -64,8 +66,10 @@ impl ChromaKitApp {
             note_range: 24,
             gap_text: "0.1".into(),
             pitch_samples: true,
-            export_individual: true,
-            auto_level: false,
+            export_individual: false,
+            normalize_volume: true,
+            add_markers: false,
+            auto_level: true,
             dark_mode: false,
             running: false,
             progress: 0,
@@ -131,6 +135,8 @@ impl ChromaKitApp {
             gap_seconds,
             pitch_samples: self.pitch_samples,
             export_individual: self.export_individual,
+            normalize_volume: self.normalize_volume,
+            add_markers: self.add_markers,
             auto_level: self.auto_level,
             worker_count: 0,
         };
@@ -306,12 +312,24 @@ impl eframe::App for ChromaKitApp {
                 self.note_range = self.note_range.clamp(1, max_range);
                 ui.add_space(4.0);
 
+                ui.label(egui::RichText::new("Audio").small().strong());
                 ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(&mut self.pitch_samples, "Pitch samples");
-                    ui.checkbox(&mut self.export_individual, "Export individual WAV files")
-                        .on_hover_text("Creates one WAV per note alongside chromatic.wav.");
+                    ui.checkbox(&mut self.pitch_samples, "Pitch samples")
+                        .on_hover_text("Tune each sample to the selected chromatic note.");
+                    ui.checkbox(&mut self.normalize_volume, "Normalize volume")
+                        .on_hover_text("Match sustained loudness and soften sharp opening peaks.");
+                    ui.checkbox(&mut self.auto_level, "Fix volume drops")
+                        .on_hover_text("Raise sustained parts that fade below a sample's attack.");
                 });
-                ui.add_space(2.0);
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Files").small().strong());
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.export_individual, "Individual WAVs")
+                        .on_hover_text("Create one WAV file per note alongside chromatic.wav.");
+                    ui.checkbox(&mut self.add_markers, "Note markers")
+                        .on_hover_text("Add FL Studio-compatible cue markers at each note start.");
+                });
+                ui.add_space(4.0);
                 egui::CollapsingHeader::new("Advanced options")
                     .default_open(false)
                     .show(ui, |ui| {
@@ -322,16 +340,11 @@ impl eframe::App for ChromaKitApp {
                                 egui::TextEdit::singleline(&mut self.gap_text),
                             );
                         });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut self.auto_level, "Fix volume drops");
-                        });
                     });
                 ui.vertical(|ui| {
                     ui.add_space(8.0);
-                    let generate = egui::Button::new(
-                        egui::RichText::new("Generate chromatic WAVs").strong(),
-                    );
+                    let generate =
+                        egui::Button::new(egui::RichText::new("Generate chromatic WAVs").strong());
                     let generate_clicked = ui
                         .add_enabled_ui(!self.running, |ui| {
                             ui.add_sized([ui.available_width(), 40.0], generate)
@@ -348,10 +361,8 @@ impl eframe::App for ChromaKitApp {
                             let width = (ui.available_width() - 132.0).max(32.0);
                             ui.add_sized(
                                 [width, 22.0],
-                                egui::ProgressBar::new(
-                                    f32::from(self.progress.min(100)) / 100.0,
-                                )
-                                .fill(ui.visuals().widgets.inactive.weak_bg_fill),
+                                egui::ProgressBar::new(f32::from(self.progress.min(100)) / 100.0)
+                                    .fill(ui.visuals().widgets.inactive.weak_bg_fill),
                             );
                             ui.label(format!("{}%", self.progress.min(100)));
                             if ui.button("Cancel").clicked()

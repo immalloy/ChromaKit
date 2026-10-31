@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     fs::{self, File},
-    io::{BufWriter, Write},
+    io::{BufWriter, Seek, SeekFrom, Write},
     path::Path,
     slice,
 };
@@ -169,6 +169,8 @@ pub(crate) struct FloatWavWriter {
     writer: BufWriter<File>,
     expected_samples: usize,
     written_samples: usize,
+    channels: u16,
+    cue_points: Vec<(u32, String)>,
 }
 
 impl FloatWavWriter {
@@ -212,7 +214,24 @@ impl FloatWavWriter {
             writer,
             expected_samples,
             written_samples: 0,
+            channels,
+            cue_points: Vec::new(),
         })
+    }
+
+    pub(crate) fn add_cue(&mut self, label: &str) -> AudioResult<()> {
+        if label.as_bytes().contains(&0) {
+            return Err("WAV cue labels cannot contain NUL bytes".into());
+        }
+        let channels = usize::from(self.channels);
+        if self.written_samples % channels != 0 {
+            return Err("WAV cue position is not aligned to a complete frame".into());
+        }
+        let frame = (self.written_samples / channels)
+            .try_into()
+            .map_err(|_| "WAV cue position exceeds the RIFF limit")?;
+        self.cue_points.push((frame, label.to_owned()));
+        Ok(())
     }
 
     pub(crate) fn write_samples(&mut self, samples: &[f32], gain: f32) -> AudioResult<()> {
@@ -265,6 +284,79 @@ impl FloatWavWriter {
     pub(crate) fn finalize(mut self) -> AudioResult<()> {
         if self.written_samples != self.expected_samples {
             return Err("WAV ended before all declared samples were written".into());
+        }
+        self.writer.flush()?;
+        if !self.cue_points.is_empty() {
+            let cue_size = 4usize
+                .checked_add(
+                    self.cue_points
+                        .len()
+                        .checked_mul(24)
+                        .ok_or("too many WAV cues")?,
+                )
+                .ok_or("too many WAV cues")?;
+            let mut labels_size = 4usize;
+            for (_, label) in &self.cue_points {
+                let label_size = 4usize
+                    .checked_add(label.len())
+                    .and_then(|size| size.checked_add(1))
+                    .ok_or("WAV cue label size overflow")?;
+                labels_size = labels_size
+                    .checked_add(8 + label_size + (label_size & 1))
+                    .ok_or("WAV cue label size overflow")?;
+            }
+            let cue_chunk_bytes = 8usize
+                .checked_add(cue_size)
+                .ok_or("WAV cue chunk size overflow")?;
+            let labels_chunk_bytes = 8usize
+                .checked_add(labels_size)
+                .ok_or("WAV cue label chunk size overflow")?;
+            let data_bytes = self
+                .expected_samples
+                .checked_mul(4)
+                .ok_or("WAV data size overflow")?;
+            let riff_size: u32 = 36usize
+                .checked_add(data_bytes)
+                .and_then(|size| size.checked_add(cue_chunk_bytes))
+                .and_then(|size| size.checked_add(labels_chunk_bytes))
+                .filter(|size| *size <= u32::MAX as usize)
+                .ok_or("WAV with cue markers exceeds the RIFF 4 GB size limit")?
+                .try_into()?;
+
+            let cue_count: u32 = self.cue_points.len().try_into()?;
+            let cue_size: u32 = cue_size.try_into()?;
+            let labels_size: u32 = labels_size.try_into()?;
+            self.writer.write_all(b"cue ")?;
+            self.writer.write_all(&cue_size.to_le_bytes())?;
+            self.writer.write_all(&cue_count.to_le_bytes())?;
+            for (index, (frame, _)) in self.cue_points.iter().enumerate() {
+                let id: u32 = (index + 1).try_into()?;
+                self.writer.write_all(&id.to_le_bytes())?;
+                self.writer.write_all(&frame.to_le_bytes())?;
+                self.writer.write_all(b"data")?;
+                self.writer.write_all(&0u32.to_le_bytes())?;
+                self.writer.write_all(&0u32.to_le_bytes())?;
+                self.writer.write_all(&frame.to_le_bytes())?;
+            }
+
+            self.writer.write_all(b"LIST")?;
+            self.writer.write_all(&labels_size.to_le_bytes())?;
+            self.writer.write_all(b"adtl")?;
+            for (index, (_, label)) in self.cue_points.iter().enumerate() {
+                let id: u32 = (index + 1).try_into()?;
+                let label_size: u32 = (4 + label.len() + 1).try_into()?;
+                self.writer.write_all(b"labl")?;
+                self.writer.write_all(&label_size.to_le_bytes())?;
+                self.writer.write_all(&id.to_le_bytes())?;
+                self.writer.write_all(label.as_bytes())?;
+                self.writer.write_all(&[0])?;
+                if label_size & 1 != 0 {
+                    self.writer.write_all(&[0])?;
+                }
+            }
+            self.writer.flush()?;
+            self.writer.get_mut().seek(SeekFrom::Start(4))?;
+            self.writer.get_mut().write_all(&riff_size.to_le_bytes())?;
         }
         self.writer.flush()?;
         Ok(())

@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::audio::{
-    leveling::{LevelingOptions, LevelingReport, auto_level_sustain},
+    leveling::{LevelingOptions, LevelingReport, auto_level_sustain, normalize_sustain},
     pitch::{PitchEstimate, PitchMethod, detect_pitch},
     shifter::pitch_shift,
     wav::{AudioBuffer, FloatWavWriter, read_wav, write_wav_scaled},
@@ -30,6 +30,8 @@ pub struct GenerationSettings {
     pub gap_seconds: f64,
     pub pitch_samples: bool,
     pub export_individual: bool,
+    pub normalize_volume: bool,
+    pub add_markers: bool,
     pub auto_level: bool,
     pub worker_count: usize,
 }
@@ -189,7 +191,12 @@ pub fn generate(
         .map(|note| originals[note % originals.len()].frames())
         .collect();
     let gap_frames = (settings.gap_seconds * f64::from(sample_rate)).round() as usize;
-    let combined_frames = validate_output_size(&note_frames, gap_frames, channels)?;
+    let marker_count = if settings.add_markers {
+        settings.range
+    } else {
+        0
+    };
+    let combined_frames = validate_output_size(&note_frames, gap_frames, channels, marker_count)?;
     if cancelled.load(Ordering::Relaxed) {
         return Err(GenerationError::Cancelled);
     }
@@ -251,24 +258,37 @@ pub fn generate(
                             Ok(RenderedAudio::Source(source_index))
                         }
                     };
-                    let result = result.and_then(|mut rendered| {
-                        let report = if settings.pitch_samples
-                            && settings.auto_level
-                            && leveling[source_index].applied
-                        {
-                            let RenderedAudio::Owned(audio) = &mut rendered else {
-                                return Err("pitch-shifted audio was not rendered".to_owned());
-                            };
-                            auto_level_sustain(audio, LevelingOptions::default()).map_err(
-                                |error| {
+                    let result = result.and_then(|rendered| {
+                        let mut rendered = match rendered {
+                            RenderedAudio::Source(index) if settings.normalize_volume => {
+                                RenderedAudio::Owned(originals[index].clone())
+                            }
+                            rendered => rendered,
+                        };
+                        let report = match &mut rendered {
+                            RenderedAudio::Owned(audio) if settings.normalize_volume => {
+                                normalize_sustain(audio).map_err(|error| {
                                     format!(
-                                        "cannot level rendered note {}: {error}",
+                                        "cannot normalize rendered note {}: {error}",
                                         settings.start_midi + note as i32
                                     )
-                                },
-                            )?
-                        } else {
-                            LevelingReport::default()
+                                })?
+                            }
+                            RenderedAudio::Owned(audio)
+                                if settings.pitch_samples
+                                    && settings.auto_level
+                                    && leveling[source_index].applied =>
+                            {
+                                auto_level_sustain(audio, LevelingOptions::default()).map_err(
+                                    |error| {
+                                        format!(
+                                            "cannot level rendered note {}: {error}",
+                                            settings.start_midi + note as i32
+                                        )
+                                    },
+                                )?
+                            }
+                            _ => LevelingReport::default(),
                         };
                         Ok((rendered, report))
                     });
@@ -301,6 +321,11 @@ pub fn generate(
                     write_wav_scaled(&staged, audio, gain)
                         .map_err(|error| fail(format!("cannot write {name}: {error}")))?;
                     individual_stage_paths.push(staged);
+                }
+                if settings.add_markers {
+                    chromatic_writer
+                        .add_cue(&midi_note_name(settings.start_midi + next_to_write as i32))
+                        .map_err(|error| fail(format!("cannot add note marker: {error}")))?;
                 }
                 chromatic_writer
                     .write_samples(&audio.samples, gain)
@@ -593,6 +618,7 @@ fn validate_output_size(
     note_frames: &[usize],
     gap_frames: usize,
     channels: u16,
+    marker_count: usize,
 ) -> GenerationResult<usize> {
     let frames = note_frames
         .iter()
@@ -605,7 +631,18 @@ fn validate_output_size(
         .checked_mul(usize::from(channels))
         .and_then(|count| count.checked_mul(4))
         .ok_or_else(|| fail("requested output is too large"))?;
-    if data_bytes > u32::MAX as usize - 36 {
+    let marker_bytes = if marker_count == 0 {
+        0
+    } else {
+        24usize
+            .checked_add(
+                marker_count
+                    .checked_mul(40)
+                    .ok_or_else(|| fail("too many note markers"))?,
+            )
+            .ok_or_else(|| fail("too many note markers"))?
+    };
+    if data_bytes > (u32::MAX as usize - 36).saturating_sub(marker_bytes) {
         return Err(fail("combined WAV would exceed the RIFF 4 GB size limit"));
     }
     Ok(frames)

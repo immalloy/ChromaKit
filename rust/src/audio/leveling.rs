@@ -2,6 +2,13 @@ use std::error::Error;
 
 use super::wav::AudioBuffer;
 
+const NORMALIZE_TARGET_DBFS: f32 = -14.0;
+const NORMALIZE_MAX_BOOST_DB: f32 = 36.0;
+const ATTACK_WINDOW_MS: usize = 5;
+const ATTACK_HOP_MS: usize = 2;
+const ATTACK_SCAN_MS: usize = 80;
+const ATTACK_HEADROOM_DB: f32 = 3.0;
+
 #[derive(Clone, Copy, Debug)]
 pub struct LevelingOptions {
     pub max_gain_db: f32,
@@ -166,6 +173,145 @@ pub fn auto_level_sustain(
     Ok(LevelingReport {
         applied: true,
         max_gain_db: maximum,
+        peak_before,
+        peak_after,
+    })
+}
+
+pub fn normalize_sustain(
+    audio: &mut AudioBuffer,
+) -> Result<LevelingReport, Box<dyn Error + Send + Sync>> {
+    if audio.sample_rate == 0
+        || audio.channels == 0
+        || audio.samples.is_empty()
+        || audio.samples.len() % usize::from(audio.channels) != 0
+    {
+        return Err("audio format is invalid or sample count is not frame-aligned".into());
+    }
+
+    let peak_before = audio
+        .samples
+        .iter()
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    let channels = usize::from(audio.channels);
+    let frames = audio.frames();
+    let window = (audio.sample_rate as usize / 50).max(1);
+    let hop = (audio.sample_rate as usize / 100).max(1);
+    if frames < window * 4 {
+        return Ok(LevelingReport {
+            peak_before,
+            peak_after: peak_before,
+            ..LevelingReport::default()
+        });
+    }
+
+    let mut rms = Vec::new();
+    for start in (0..=frames - window).step_by(hop) {
+        let samples = &audio.samples[start * channels..(start + window) * channels];
+        let square_sum = samples
+            .iter()
+            .map(|sample| f64::from(*sample) * f64::from(*sample))
+            .sum::<f64>();
+        rms.push((square_sum / samples.len() as f64).sqrt() as f32);
+    }
+    let mut sorted = rms.clone();
+    sorted.sort_by(f32::total_cmp);
+    let active_floor = (sorted[(sorted.len() - 1) * 95 / 100] * 10.0f32.powf(-45.0 / 20.0))
+        .max(10.0f32.powf(-70.0 / 20.0));
+    let Some(first_active) = rms.iter().position(|&level| level >= active_floor) else {
+        return Ok(LevelingReport {
+            peak_before,
+            peak_after: peak_before,
+            ..LevelingReport::default()
+        });
+    };
+    let last_active = rms
+        .iter()
+        .rposition(|&level| level >= active_floor)
+        .unwrap();
+    let sustain_start = (first_active + (audio.sample_rate as usize / 10) / hop).min(last_active);
+    let sustain_end = last_active
+        .saturating_sub((audio.sample_rate as usize / 5) / hop)
+        .max(sustain_start);
+    let sustain = if sustain_end.saturating_sub(sustain_start) >= 3 {
+        &rms[sustain_start..sustain_end]
+    } else {
+        &rms[first_active..=last_active]
+    };
+    let sustain_rms = median(sustain);
+    if !sustain_rms.is_finite() || sustain_rms <= 1e-12 {
+        return Ok(LevelingReport {
+            peak_before,
+            peak_after: peak_before,
+            ..LevelingReport::default()
+        });
+    }
+
+    let attack_window = ((audio.sample_rate as usize * ATTACK_WINDOW_MS) / 1_000).max(1);
+    let attack_hop = ((audio.sample_rate as usize * ATTACK_HOP_MS) / 1_000).max(1);
+    let attack_frames = ((audio.sample_rate as usize * ATTACK_SCAN_MS) / 1_000).min(frames);
+    let threshold = sustain_rms * 10.0f32.powf(ATTACK_HEADROOM_DB / 20.0);
+    let mut envelope = Vec::new();
+    let mut previous_gain = 1.0f32;
+    for start in (0..attack_frames).step_by(attack_hop) {
+        let end = (start + attack_window).min(frames);
+        let samples = &audio.samples[start * channels..end * channels];
+        let square_sum = samples
+            .iter()
+            .map(|sample| f64::from(*sample) * f64::from(*sample))
+            .sum::<f64>();
+        let level = (square_sum / samples.len() as f64).sqrt() as f32;
+        let desired_gain = if level > threshold {
+            (threshold / level).sqrt()
+        } else {
+            1.0
+        };
+        let time_constant = if desired_gain < previous_gain {
+            0.002
+        } else {
+            0.015
+        };
+        let alpha = 1.0 - (-(attack_hop as f32 / audio.sample_rate as f32) / time_constant).exp();
+        previous_gain += alpha * (desired_gain - previous_gain);
+        envelope.push(previous_gain);
+    }
+    for frame in 0..attack_frames {
+        let position = frame as f32 / attack_hop as f32;
+        let index = (position as usize).min(envelope.len().saturating_sub(1));
+        let fraction = position.fract();
+        let start_gain = if index == 0 { 1.0 } else { envelope[index - 1] };
+        let end_gain = envelope[index];
+        let gain = start_gain + (end_gain - start_gain) * fraction;
+        for sample in &mut audio.samples[frame * channels..(frame + 1) * channels] {
+            *sample *= gain;
+        }
+    }
+
+    let target_rms = 10.0f32.powf(NORMALIZE_TARGET_DBFS / 20.0);
+    let normalization_db =
+        (20.0 * (target_rms / sustain_rms).log10()).clamp(-24.0, NORMALIZE_MAX_BOOST_DB);
+    let scale = 10.0f32.powf(normalization_db / 20.0);
+    for sample in &mut audio.samples {
+        *sample *= scale;
+    }
+
+    let compensated_peak = audio
+        .samples
+        .iter()
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    if compensated_peak > 0.98 {
+        let safety_scale = 0.98 / compensated_peak;
+        for sample in &mut audio.samples {
+            *sample *= safety_scale;
+        }
+    }
+    let peak_after = audio
+        .samples
+        .iter()
+        .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+    Ok(LevelingReport {
+        applied: true,
+        max_gain_db: normalization_db,
         peak_before,
         peak_after,
     })
